@@ -1,0 +1,299 @@
+---
+title: "Demanda a P3: Importar, combinar i analitzar les dades"
+output: html_notebook
+Author: "Victòria Oliveres"
+---
+
+# Estudi de la demanda a Lleida
+
+Anàlisi de les diferències de demanda escolar als municipis catalans, fent especial èmfasi en la ciutat de Lleida, per un reportatge publicat al Diari de l'Educació.
+
+## Importar dades
+
+#### Directori
+
+Directori de centres educatius amb informació general i localitzacions. [Descarregat del Portal de Dades Obertes de la Generalitat de Catalunya](https://analisi.transparenciacatalunya.cat/ca/Educaci-/Directori-de-centres-docents/e2ef-eiqj)
+
+```{r}
+centresdirectori <- read.csv("Dades_obertes_Catalunya/Directori_de_centres_docents.csv", fileEncoding = "UTF8", colClasses = "character")
+```
+
+Neteja d'espais en blanc de la columna que ens interessa: EINF2C (educació infantil de segon cicle).
+
+```{r}
+library(stringr)
+centresdirectori$EINF2C <- gsub('\\s+', '', centresdirectori$EINF2C)
+```
+
+```{r}
+#Filtrar dades de les escoles que tenen EINF2C per l'últim any disponible
+library(dplyr)
+centresdirEINF2C1718 <- filter(centresdirectori, EINF2C == "EINF2C")
+centresdirEINF2C1718 <- filter(centresdirEINF2C1718, Any == 2017)
+#Seleccionar columnes
+centresdirEINF2C1718 <- select(centresdirEINF2C1718, -Telèfon, -FAX, -E.mail.centre)
+centresdirEINF2C1718 <- select(centresdirEINF2C1718, 1:26)
+```
+
+#### Naturalesa
+
+Naturalesa de les escoles: pública, concertada o privada. Cal afegir aquest dataset ja que la columna de naturalesa del directori no distingeix les escoles concertades). [Descarregat del Mapa Escolar de Catalunya](http://mapaescolar.gencat.cat)
+
+```{r}
+library(readxl)
+centresnatu <- read_excel("Mapa_escolar/RelacioCentres1718.xls")
+#Seleccionar i renombrar columnes
+centresnatu <- select(centresnatu, c(1,2,10,11))
+colnames(centresnatu) <- c("Codi.centre", "Nom", "Codi.natu", "Nom.natu")
+```
+
+#### Demanda
+
+Nombre de sol·licituds rebudes al període de preinscripció a P3 per centre. Dades obtingudes a partir d'una petició de dret d'accés a la informació pública en format PDF i transformades amb el software Tabula.
+
+```{r}
+demandaEINF2C1718 <- read.csv("Peticio_transparencia/Annex-3_Apart-J-_Demanda_rebuda_Infantil_durant_el_proces-CLEAN.csv", encoding = "UTF-8", colClasses = "character")
+#hem importat les columnes com a caràcters perquè els IDs no perdéssin el 0 inicial, però volem transformar la columna de sol·licituds a números
+demandaEINF2C1718$Solicituds <- as.numeric(demandaEINF2C1718$Solicituds)
+```
+
+#### Assignacions
+
+Oferta de places inicials i assignacions / matrícules. [Descarregat del web del Departament d'Ensenyament](http://ensenyament.gencat.cat/ca/departament/estadistiques/estadistiques-ensenyament/curs-actual/)
+
+```{r}
+library(readxl)
+assignacions1718 <- read_excel("Estadistiques_Ensenyament/Assignacions-preinscripcio-obligatoris-17-18.xlsx", skip = 2)
+#Select and rename columns
+assignacions1718 <- dplyr::select(assignacions1718, c(1, 2, 3, 4, 7,8,9,10,11,12,13,14))
+colnames(assignacions1718) <- c("Codi.centre", "Nom.centre", "Municipi", "Districte", "Ensenyament", "Nivell", "Grups.inicial", "Mixt", "Places.inicial", "Assignacions", "Assignacions.primera", "Assignacions.altres")
+#Filter data for EINF2C
+assignacionsEINF2C1718 <- dplyr::filter(assignacions1718, Ensenyament == "Educació infantil: Parvulari" & Nivell == 1)
+```
+
+#### Zonificació
+
+Com es divideixen les àrees educatives a Lleida? Es categoritzen per colors i no coincideixen amb cap districte o altra àrea administrativa. No hi ha shapefiles oficials amb els límits, només la [imatge d'un mapa en un PDF](http://ensenyament.gencat.cat/web/.content/home/serveis_territorials/lleida/alumnes_i_families/zonificacio-adscripcions-lleida-ciutat/LLE-mapes-zonificacio-primaria.pdf).
+
+Per a crear un mapa interactiu aproximem les àrees educatives a un conjunt de seccions censals. Això no ens dóna la forma exacta però sí molt aproximada.
+
+Desscàrrega de les seccions censals de Lleida de l' [Institut Cartogràfic de Caralunya](http://www.icgc.cat/Administracio-i-empresa/Descarregues/Capes-de-geoinformacio/Seccions-censals) i filtrats amb Mapshaper i Carto.
+
+```{r}
+sclleida <- read.csv("Seccions_censals_Lleida/Lleida2-seccions_censals.csv")
+```
+
+Classificació manual de les seccions censals en zones educatives:
+
+```{r}
+lleidasc <- select(sclleida, districte, seccio, mundissec)
+lleidasc$mundissec <- as.character(lleidasc$mundissec)
+lleidasc$areainfluencia <- ifelse(lleidasc$mundissec %in% c("25120709001", "25120708002"), "lila", ifelse(lleidasc$mundissec %in% c("25120701010", "25120701005"), "lilaSeca",
+ifelse(lleidasc$mundissec %in% c("25120706007", "25120706014", "25120706009", "25120709002", "25120706017", "25120706006"), "rosa",
+ifelse(lleidasc$mundissec %in% c("25120704011", "25120704005", "25120704006", "25120704007", "25120704017", "25120704010", "25120705006", "25120705011", "25120705012", "25120705008", "25120706011", "25120706016", "25120706003", "25120706010", "25120706012", "25120706004", "25120706013", "25120706005", "25120705007", "25120705003", "25120704005", "25120704004", "25120704008", "25120705004", "25120705005", "25120705010", "25120705009"), "taronja",
+ifelse(lleidasc$mundissec %in% c("2512070502", "25120704001", "25120703003", "25120706001", "25120706002", "25120701003", "25120701001", "25120701009", "2512071012", "25120701008", "25120701011", "25120706017", "25120701007", "25120701011", "25120701001", "25120701012", "25120701008", "25120701013", "25120701006", "25120709002", "25120701014", "25120701004", "25120705002"), "blau",
+ifelse(lleidasc$mundissec %in% c("25120704014", "25120703005", "25120703004", "25120703008", "25120703007", "25120703007", "25120703006", "25120704016", "25120704015", "25120704013", "25120704003", "25120703001", "25120703005", "25120702009", "25120708001", "25120702002", "25120702003", "25120702004", "25120702006", "25120702007", "25120702008"), "verd",
+ifelse(lleidasc$mundissec %in% c("25120702005", "25120707001", "25120707002", "25120707003", "25120707004", "25120707005", "25120707006", "25120707007"), "groc", "none")))))))
+```
+
+## Combinar les dades
+
+Directori + Naturalesa
+```{r}
+library(dplyr)
+dirnatuEINF2C1718 <- inner_join(centresdirEINF2C1718, centresnatu, by = "Codi.centre")
+```
+
+Directori + Naturalesa + Demanda
+```{r}
+dirnatudemEINF2C1718 <- left_join(dirnatuEINF2C1718, demandaEINF2C1718, by = "Codi.centre")
+```
+
+Directori + Naturalesa + Demanda + Assignacions
+```{r}
+dirnatudemassigEINF2C1718 <- left_join(dirnatudemEINF2C1718, assignacionsEINF2C1718, by = "Codi.centre")
+```
+
+Eliminar columnes repetides i sobrants
+```{r}
+escolesP3 <- select(dirnatudemassigEINF2C1718, -Any, -Nom, -Nom.centre.x, -Municipi.x, -Nom.centre.y, -Municipi.y, -Districte, -Ensenyament, -Nivell)
+```
+
+
+## Anàlisi
+
+L’anàlisi no inclourà les escoles rurals perquè no segueixen les mateixes dinàmiques d’oferta i demanda. 
+
+```{r}
+escolesP3 <- escolesP3 %>% filter(!(grepl("ZER ", Denominació.completa, ignore.case = TRUE)))
+```
+
+En el cas de Lleida, incloem l’escola Alba, ja que encara que està al municipi adjacent de Corbins l’administració la inclou a les possibilitats de tria de les famílies de Lleida. 
+
+```{r}
+escolesP3$Nom.municipi <- ifelse(escolesP3$Codi.centre=="25006501", "Lleida", escolesP3$Nom.municipi)
+```
+
+#### Ràtio de demanda
+
+La ràtio de demanda és la divisió de les sol·licituds entre l'oferta inicial de places. Mostra quines escoles van tenir més demanda en relació amb els llocs que ofertaven.
+
+```{r}
+escolesP3 <- mutate(escolesP3, RatioDem = Solicituds / Places.inicial)
+```
+
+Volem trobar quantes escoles tenen demanda feble, adequada i sobredemanda a Lleida.
+
+```{r}
+library(dplyr)
+escolesP3 %>% select(Nom.municipi, Denominació.completa, RatioDem) %>% group_by(Nom.municipi) %>% summarise(NSobredemanda=sum(RatioDem>1,na.rm=T), NDemandaOK=sum(between(RatioDem,0.75,1),na.rm=T), NDemandaFebre=sum(RatioDem<0.75,na.rm=T), PtgSobredemanda=((sum(RatioDem>1,na.rm=T)/n())*100), PtgDemandaOK=((sum(between(RatioDem,0.75,1),na.rm=T)/n())*100), PtgDemandaFeble=((sum(RatioDem<0.75,na.rm=T)/n())*100), Max=max(RatioDem,na.rm=TRUE), Min=min(RatioDem,na.rm=TRUE)) %>% filter(Nom.municipi=="Lleida")
+```
+
+I quines són les escoles amb menys i més demanda a Lleida.
+
+```{r}
+(filter(escolesP3,Nom.municipi=="Lleida"))$Denominació.completa[which.min((filter(escolesP3,Nom.municipi=="Lleida"))$RatioDem)]
+(filter(escolesP3,Nom.municipi=="Lleida"))$Denominació.completa[which.max((filter(escolesP3,Nom.municipi=="Lleida"))$RatioDem)]
+```
+
+Anàlisi estadística per municipi: càlcul de diferents estadístiques descriptives per a comparar municipis.
+
+```{r}
+municipisP3 <- escolesP3 %>% group_by(Nom.municipi) %>% summarise(Num.schools=n(), Municipi.min=min(RatioDem,na.rm=TRUE), Municipi.max=max(RatioDem,na.rm=TRUE),  Municipi.mean=mean(RatioDem,na.rm=TRUE), Municipi.median=median(RatioDem,na.rm=TRUE), Municipi.var=var(RatioDem,na.rm=TRUE), Municipi.sd=sd(RatioDem,na.rm=TRUE), Municipi.IQR=IQR(RatioDem,na.rm=TRUE), Public.municipi=sum(Nom.natu=="Públic"), Concertat.municipi=sum(Nom.natu=="Concertat"), Privat.municipi=sum(Nom.natu=="Privat"), Ptg.public.municipi=((sum(Nom.natu=="Públic")/n())*100), Ptg.concertat.municipi=((sum(Nom.natu=="Concertat")/n())*100),  Ptg.privat.municipi=((sum(Nom.natu=="Privat")/n())*100), Sobredemanda.municipi=((sum(RatioDem>1,na.rm=T)/n())*100), DemandaOK.municipi=((sum(between(RatioDem,0.75,1),na.rm=T)/n())*100), DemandaFeble.municipi=((sum(RatioDem<0.75,na.rm=T)/n())*100))
+```
+
+Afegim les estadístiques de resum a les dades de les escoles.
+
+```{r}
+escolesP3 <- left_join(escolesP3, municipisP3, by="Nom.municipi")
+```
+
+Filtrem les 10 ciutats més poblades de Catalunya, que són també les que tenen més de 100.000 habitants.
+
+```{r}
+top10escolesP3 <- filter(escolesP3, Nom.municipi == "Barcelona" | Nom.municipi == "L'Hospitalet de Llobregat" | Nom.municipi == "Terrassa" | Nom.municipi == "Badalona" | Nom.municipi == "Sabadell" | Nom.municipi == "Lleida" | Nom.municipi == "Tarragona" | Nom.municipi == "Mataró" | Nom.municipi == "Santa Coloma de Gramenet" | Nom.municipi == "Reus")
+```
+
+```{r}
+top10municipisP3 <- filter(municipisP3, Nom.municipi == "Barcelona" | Nom.municipi == "L'Hospitalet de Llobregat" | Nom.municipi == "Terrassa" | Nom.municipi == "Badalona" | Nom.municipi == "Sabadell" | Nom.municipi == "Lleida" | Nom.municipi == "Tarragona" | Nom.municipi == "Mataró" | Nom.municipi == "Santa Coloma de Gramenet" | Nom.municipi == "Reus")
+```
+
+Lleida és la segona ciutat amb una desviació estàndard més gran. Per tant, podem dir que: "Lleida és el segon municipi català de més de 100.000 habitants amb una diferència de demanda més gran entre les seves escoles".
+
+#### Vacants
+
+Places vacants en cada municipi: Càlcul del percentatge de matrícules en relació a la demanda inicial.
+
+```{r}
+vacantsmuni <- schoolsP3 %>% filter(!is.na(Places.inicial)) %>% filter(!is.na(Solicituds)) %>% group_by(Nom.municipi) %>% summarise( ptgvacantsassig=((sum(Places.inicial)-sum(Assignacions))*100)/sum(Places.inicial), nplacesinicial=sum(Places.inicial), nassignacions=sum(Assignacions),  nvacantsassig=sum(Places.inicial)-sum(Assignacions))
+vacantsmuni <- filter(vacantsmuni, Num.schools>1)
+```
+
+Filtrem les ciutats amb més de 40.000 habitants.
+
+```{r}
+top40municipisP3 <- filter(municipisP3, Nom.municipi == "Barcelona" | Nom.municipi == "L'Hospitalet de Llobregat" | Nom.municipi == "Terrassa" | Nom.municipi == "Badalona" | Nom.municipi == "Sabadell" | Nom.municipi == "Lleida" | Nom.municipi == "Tarragona" | Nom.municipi == "Mataró" | Nom.municipi == "Santa Coloma de Gramenet" | Nom.municipi == "Reus" | Nom.municipi == "Girona" | Nom.municipi == "Sant Cugat del Vallès" | Nom.municipi == "Cornellà de Llobregat" | Nom.municipi == "Sant Boi de Llobregat" | Nom.municipi == "Rubí" | Nom.municipi == "Manresa" | Nom.municipi == "Vilanova i la Geltrú" | Nom.municipi == "Viladecans" | Nom.municipi == "Castelldefels" | Nom.municipi == "El Prat de Llobregat" | Nom.municipi == "Granollers" | Nom.municipi == "Cerdanyola del Vallès" | Nom.municipi == "Mollet del Vallès" | Nom.municipi == "Gavà" | Nom.municipi == "Figueres" | Nom.municipi == "Esplugues de Llobregat" | Nom.municipi == "Sant Feliu de Llobregat" | Nom.municipi == "Vic")
+```
+
+Combinat amb el percentatge de vacants.
+
+```{r}
+top40municipisP3 <- left_join(top40municipisP3, vacantsmuni, by="Nom.municipi")
+```
+
+I have a lead: "Lleida és el tercer municipi català de més de 40.000 habitants amb més percentatge de vacants"."
+
+Veure les vacants a Lleida
+
+```{r}
+filter(top40municipisP3, Nom.municipi=="Lleida")
+```
+
+#### Vacants per zona
+
+Hem classificat manualment les escoles a la seva zona educativa.
+
+```{r}
+LleidaEscolesZona <- read.csv("Escoles-x-zones-educatives-Lleida.csv", encoding = "UTF-8")
+colnames(LleidaEscolesZona) <- c("Codi.centre", "Denominació.completa", "Zone")
+```
+
+Combinar amb les dades de Lleida
+```{r}
+LleidaEscolesZona$Codi.centre <- as.character(LleidaEscolesZona$Codi.centre)
+LleidaEscolesZona <- left_join(LleidaEscolesZona, escolesP3, by=c("Codi.centre", "Denominació.completa"))
+```
+
+Anàlisi per zona
+```{r}
+zoneslleidaP32017 <- LleidaEscolesZona %>% filter(!is.na(Places.inicial)) %>% filter(!is.na(Solicituds)) %>% group_by(Zone) %>% summarise(Num.schools=n(), Min=min(RatioDem,na.rm=TRUE), Max=max(RatioDem,na.rm=TRUE),  Mean=mean(RatioDem,na.rm=TRUE), Median=median(RatioDem,na.rm=TRUE), Var=var(RatioDem,na.rm=TRUE), Sd=sd(RatioDem,na.rm=TRUE), IQR=IQR(RatioDem,na.rm=TRUE), Public=sum(Nom.natu=="Públic"), Concertat=sum(Nom.natu=="Concertat"), Privat=sum(Nom.natu=="Privat"), Ptg.public=((sum(Nom.natu=="Públic")/n())*100), Ptg.concertat=((sum(Nom.natu=="Concertat")/n())*100),   Sobredemanda=((sum(RatioDem>1,na.rm=T)/n())*100), DemandaOK=((sum(between(RatioDem,0.75,1),na.rm=T)/n())*100), DemandaFeble=((sum(RatioDem<0.75,na.rm=T)/n())*100), ptgvacantssol=((sum(Places.inicial)-sum(Solicituds))*100)/sum(Places.inicial), Num.schools=n(), ptgvacantsassig=((sum(Places.inicial)-sum(Assignacions))*100)/sum(Places.inicial), placesinici=sum(Places.inicial), assignacions=sum(Assignacions), solicituds=sum(Solicituds))
+```
+
+Les vacants van des del 3% a la zona Verda fins al 20% a la zona blava.
+
+#### Variable extra: infants empadronats a cada zona
+
+Volem comparar també l'oferta inicial i les matrícules amb els nens i nenes en edat d'entrar a P3 empadronats a cada zona.
+
+Importem les dades dels infants que tenien 2 anys a l'inici del 2017, que són els que haurien de començar P3 al curs 2017/18. Descarregades de l' [IdesCat](http://www.idescat.cat/pub/?geo=sec%3A2512001001&id=pmh&n=1180&fil=3&col=3#Plegable=geo). 
+
+Cal fer un scraping (fet externament amb Python en aquest cas) ja que les dades de cada secció censal es troben en una pàgina diferent.
+
+```{r}
+nenslleidaP32017 <- read.csv("habitantsP32017.csv")
+nenslleidaP32017$SC <- as.character(nenslleidaP32017$SC)
+colnames(nenslleidaP32017)[1] <- "mundissec"
+```
+
+```{r}
+#Els IDs no cooncorden, cal afegir un 0 al mig
+library(stringr)
+nenslleidaP32017$mundissec <- paste("2512070", str_sub(nenslleidaP32017$mundissec, -4,-1), sep="")
+```
+
+Els combino amb les seccions censals classificades en zones educatives.
+
+```{r}
+nenslleidaP32017 <- full_join(lleidasc, nenslleidaP32017, by="mundissec")
+#correct zones
+nenslleidaP32017$areainfluencia <- if_else(nenslleidaP32017$mundissec=="25120708003", "lila", nenslleidaP32017$areainfluencia)
+nenslleidaP32017$areainfluencia <- if_else(nenslleidaP32017$areainfluencia=="lilaSeca", "lila", nenslleidaP32017$areainfluencia)
+nenslleidaP32017 <- filter(nenslleidaP32017, !areainfluencia=="none")
+```
+
+Suma de nens i nenes en edat de començar a P3 per zona.
+
+```{r}
+nenszoneslleidaP32017 <- nenslleidaP32017 %>% group_by(areainfluencia) %>% summarise(NensZona=sum(dosanys2017))
+colnames(nenszoneslleidaP32017)[1] <- "Zone"
+```
+
+```{r}
+#Canviar els noms de les zones per a poder-ho combinar
+zoneslleidaP32017$Zone <- ifelse(zoneslleidaP32017$Zone %in% c("Lila"), "lila", ifelse(zoneslleidaP32017$Zone %in% c("Rosa"), "rosa",
+ifelse(zoneslleidaP32017$Zone %in% c("Blau"), "blau", ifelse(zoneslleidaP32017$Zone %in% c("Groc"), "groc", ifelse(zoneslleidaP32017$Zone %in% c("Verd"), "verd", ifelse(zoneslleidaP32017$Zone %in% c("Taronja"), "taronja", "none"))))))
+```
+
+Combinar l'anàlisi per zona amb el nombre d'infants en edat de P3.
+
+```{r}
+zoneslleidaP32017 <- full_join(zoneslleidaP32017, nenszoneslleidaP32017, by="Zone")
+```
+
+Quin percentatge representen els habitants sobre la matrícula?
+
+```{r}
+zoneslleidaP32017 %>% mutate(ptginhab=(NensZona-assignacions)/assignacions)
+```
+
+## Preparar dades per la visualització
+
+Finalment, exportem les dades que voldrem visualitzar.
+
+```{r}
+write.csv(top10schoolsP3, "top10schoolsP3.csv", fileEncoding="UTF-8", row.names = F)
+write.csv(zoneslleidaP32017, "zoneslleidaP32017.csv", fileEncoding="UTF-8", row.names = F)
+write.csv(top40municipisP3, "top40municipisP3.csv", fileEncoding="UTF-8", row.names = F)
+write.csv(LleidaSchoolsZone, "LleidaSchoolsZone.csv", fileEncoding="UTF-8", row.names = F)
+write.csv(schoolsP3, "schoolsP3.csv", fileEncoding="UTF-8", row.names = F)
+```
